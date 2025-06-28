@@ -2,10 +2,12 @@ package com.example.DriveProject.service;
 
 import com.example.DriveProject.entity.FileEntity;
 import com.example.DriveProject.repo.FileRepo;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -14,6 +16,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -25,29 +28,78 @@ public class FileStorageService {
     @Autowired
     private FileRepo fileRepo;
 
-    public String saveFile(MultipartFile file, Long parentFolderId) throws IOException {
-        Path uploadPath = Paths.get(uploadDir);
-        if (!Files.exists(uploadPath)) {
-            Files.createDirectories(uploadPath);
+    private Path fileStoragePath;
+
+    @PostConstruct
+    public void init() {
+        try {
+            this.fileStoragePath = Paths.get(uploadDir).toAbsolutePath().normalize();
+
+            // Create directory if it doesn't exist
+            if (!Files.exists(this.fileStoragePath)) {
+                Files.createDirectories(this.fileStoragePath);
+                System.out.println("✅ Created upload directory: " + this.fileStoragePath);
+            } else {
+                System.out.println("✅ Upload directory exists: " + this.fileStoragePath);
+            }
+
+            // Test write permissions
+            Path testFile = this.fileStoragePath.resolve("test.txt");
+            Files.write(testFile, "test".getBytes());
+            Files.deleteIfExists(testFile);
+            System.out.println("✅ Directory is writable");
+
+        } catch (Exception e) {
+            System.err.println("❌ Could not initialize file storage: " + e.getMessage());
+            e.printStackTrace();
+
+            // Fallback to system temp directory
+            try {
+                this.fileStoragePath = Paths.get(System.getProperty("java.io.tmpdir"), "drive-uploads")
+                        .toAbsolutePath().normalize();
+                Files.createDirectories(this.fileStoragePath);
+                System.out.println("✅ Using fallback directory: " + this.fileStoragePath);
+            } catch (Exception fallbackException) {
+                System.err.println("❌ Fallback directory creation failed: " + fallbackException.getMessage());
+                throw new RuntimeException("Cannot initialize file storage", fallbackException);
+            }
         }
+    }
 
-        String fileName = file.getOriginalFilename();
-        Path filePath = uploadPath.resolve(fileName);
+    public String saveFile(MultipartFile file, Long parentFolderId) throws IOException {
+        try {
+            System.out.println("📁 Upload directory: " + this.fileStoragePath);
+            System.out.println("📄 Original filename: " + file.getOriginalFilename());
+            System.out.println("📊 File size: " + file.getSize() + " bytes");
 
-        Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
+            // Use the initialized path instead of creating new one
+            String fileName = file.getOriginalFilename();
+            Path filePath = this.fileStoragePath.resolve(fileName);
 
-        // Meta data for db
-        FileEntity fileEntity = new FileEntity();
-        fileEntity.setName(fileName);
-        fileEntity.setPath(filePath.toString());
-        fileEntity.setSize(file.getSize());
-        fileEntity.setType("file");
-        fileEntity.setParentFolderId(parentFolderId);
-        fileEntity.setCreatedAt(LocalDateTime.now());
+            Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
 
-        fileRepo.save(fileEntity);
+            // Meta data for db
+            FileEntity fileEntity = new FileEntity();
+            fileEntity.setName(fileName);
+            fileEntity.setPath(filePath.toString());
+            fileEntity.setSize(file.getSize());
+            fileEntity.setType("file");
+            fileEntity.setParentFolderId(parentFolderId);
+            fileEntity.setCreatedAt(LocalDateTime.now());
 
-        return "File uploaded successfully !!";
+            fileRepo.save(fileEntity);
+
+            return "File uploaded successfully !!";
+
+        } catch (Exception e) {
+            System.err.println("❌ Error saving file: " + e.getMessage());
+            e.printStackTrace();
+            throw new IOException("Failed to store file: " + e.getMessage(), e);
+        }
+    }
+
+    public FileEntity getFileById(Long id) {
+        return fileRepo.findById(id).orElseThrow(() -> new RuntimeException("File not found"));
     }
 
     public List<FileEntity> getFilesInFolder(Long parentFolderId) {
@@ -62,10 +114,6 @@ public class FileStorageService {
                     .filter(f -> parentFolderId.equals(f.getParentFolderId()))
                     .collect(Collectors.toList());
         }
-    }
-
-    public FileEntity getFileById(Long id) {
-        return fileRepo.findById(id).orElseThrow(() -> new RuntimeException("File not found"));
     }
 
     public void deleteById(Long id) {
