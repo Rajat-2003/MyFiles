@@ -24,7 +24,7 @@ import java.util.List;
 @CrossOrigin(
         origins = {
                 "http://localhost:3000",
-                "https://mydrive-e3qk5lpgc-rajats-projects-a5da8927.vercel.app"
+
         },
         methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.DELETE, RequestMethod.PUT, RequestMethod.OPTIONS},
         allowedHeaders = "*",
